@@ -1,0 +1,38 @@
+from rest_framework import serializers
+from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment
+
+class StudentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Student
+        fields = '__all__'
+
+class SectionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Section
+        fields = '__all__'
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Attendance
+        fields = '__all__'
+
+class FeeLedgerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeeLedger
+        fields = '__all__'
+
+class ExamSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Exam
+        fields = '__all__'
+
+class MarkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Mark
+        fields = '__all__'
+
+
+class TeacherClassAssignmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TeacherClassAssignment
+        fields = '__all__'
