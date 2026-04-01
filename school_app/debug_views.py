@@ -2,9 +2,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db import connection
 from django.conf import settings
-import os
+from rest_framework.permissions import AllowAny
 
 class DbDebugView(APIView):
+    permission_classes = [AllowAny]
     """
     Diagnostic endpoint to check database connection, 
     engine, and required tables.
