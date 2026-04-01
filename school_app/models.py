@@ -104,3 +104,18 @@ class TeacherClassAssignment(models.Model):
     def __str__(self):
         section = f" - {self.section_name}" if self.section_name else ""
         return f"Teacher {self.teacher_id}: {self.class_name}{section}"
+
+
+class SchoolSetting(models.Model):
+    school_name = models.CharField(max_length=255, default="Skyronix Model School")
+    logo = models.ImageField(upload_to='school_logos/', null=True, blank=True)
+    reg_no = models.CharField(max_length=100, null=True, blank=True)
+    phone = models.CharField(max_length=50, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.school_name
+
+    @classmethod
+    def get_active(cls):
+        return cls.objects.first() or cls(school_name="Skyronix Model School")

@@ -21,5 +21,7 @@ from school_app.views import health_check
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('school_app.urls')),
+    path('api/', include('school_app.urls')),
     path('', health_check),
+    path('', include('school_app.urls')),
 ]

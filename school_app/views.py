@@ -5,7 +5,7 @@ from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment
+from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment, SchoolSetting
 from django.http import HttpResponse
 from .serializers import StudentSerializer, SectionSerializer, AttendanceSerializer, FeeLedgerSerializer, ExamSerializer, MarkSerializer
 
@@ -218,3 +218,26 @@ class TeacherMonthlyAttendanceHistoryView(APIView):
         if label == 'leave':
             return 'L'
         return '-'
+
+
+class SchoolInfoView(APIView):
+    """Returns general school information."""
+
+    def get(self, request):
+        setting = SchoolSetting.get_active()
+        return Response({
+            'school_name': setting.school_name,
+            'reg_no': setting.reg_no or '',
+            'phone': setting.phone or '',
+            'logo_path': setting.logo.url if setting.logo else '',
+        })
+
+
+class SchoolLogoView(APIView):
+    """Serves the school logo image."""
+
+    def get(self, request):
+        setting = SchoolSetting.get_active()
+        if setting.logo:
+            return HttpResponse(setting.logo.read(), content_type="image/png")
+        return HttpResponse("No logo found", status=404)
