@@ -72,6 +72,11 @@ class FeeLedger(models.Model):
 class Exam(models.Model):
     exam_name = models.CharField(max_length=200)
     year = models.IntegerField()
+    sync_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.exam_name} ({self.year})"
 
 class Mark(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='marks')
@@ -94,6 +99,7 @@ class TeacherClassAssignment(models.Model):
     is_primary = models.BooleanField(default=False)
     effective_from = models.DateField(null=True, blank=True)
     effective_to = models.DateField(null=True, blank=True)
+    sync_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -104,6 +110,21 @@ class TeacherClassAssignment(models.Model):
     def __str__(self):
         section = f" - {self.section_name}" if self.section_name else ""
         return f"Teacher {self.teacher_id}: {self.class_name}{section}"
+
+class Timetable(models.Model):
+    class_name = models.CharField(max_length=100)
+    section_name = models.CharField(max_length=100, null=True, blank=True)
+    day = models.CharField(max_length=20)
+    subject = models.CharField(max_length=100)
+    teacher_id = models.IntegerField()
+    teacher_name = models.CharField(max_length=200, null=True, blank=True)
+    start_time = models.CharField(max_length=50)
+    end_time = models.CharField(max_length=50)
+    sync_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.day}: {self.class_name} - {self.subject}"
 
 
 class SchoolSetting(models.Model):
@@ -119,3 +140,15 @@ class SchoolSetting(models.Model):
     @classmethod
     def get_active(cls):
         return cls.objects.first() or cls(school_name="Skyronix Model School")
+
+class Announcement(models.Model):
+    title = models.CharField(max_length=255)
+    content = models.TextField()
+    class_name = models.CharField(max_length=100, null=True, blank=True)
+    section_name = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.CharField(max_length=100, null=True, blank=True)
+    sync_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title

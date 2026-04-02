@@ -5,9 +5,9 @@ from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment, SchoolSetting
+from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment, SchoolSetting, Timetable, Announcement
 from django.http import HttpResponse
-from .serializers import StudentSerializer, SectionSerializer, AttendanceSerializer, FeeLedgerSerializer, ExamSerializer, MarkSerializer
+from .serializers import StudentSerializer, SectionSerializer, AttendanceSerializer, FeeLedgerSerializer, ExamSerializer, MarkSerializer, TimetableSerializer
 
 def health_check(request):
     return HttpResponse("School Management System Backend is Online", status=200)
@@ -76,6 +76,10 @@ class ExamViewSet(viewsets.ModelViewSet):
 class MarkViewSet(viewsets.ModelViewSet):
     queryset = Mark.objects.all()
     serializer_class = MarkSerializer
+
+class TimetableViewSet(viewsets.ModelViewSet):
+    queryset = Timetable.objects.all()
+    serializer_class = TimetableSerializer
 
 
 class TeacherMonthlyAttendanceHistoryView(APIView):
@@ -227,9 +231,9 @@ class SchoolInfoView(APIView):
         setting = SchoolSetting.get_active()
         return Response({
             'school_name': setting.school_name,
-            'reg_no': setting.reg_no or '',
+            'registration_number': setting.reg_no or '',
             'phone': setting.phone or '',
-            'logo_path': setting.logo.url if setting.logo else '',
+            'logo_path': f"/api/school/logo/?t={datetime.now().timestamp()}",
         })
 
 
@@ -242,64 +246,229 @@ class SchoolLogoView(APIView):
             return HttpResponse(setting.logo.read(), content_type="image/png")
 class SyncDataView(APIView):
     """
-    Receives and synchronizes bulk data from the PC application (SQLite) 
+    Receives and synchronizes FULL bulk data from the PC application (SQLite) 
     to the cloud (Supabase/PostgreSQL).
     """
 
     def post(self, request):
         data = request.data
         if not data:
+            print("[Sync] Error: No data received in request.")
             return Response({"status": "error", "message": "No data received"}, status=status.HTTP_400_BAD_REQUEST)
 
+        print(f"[Sync] Received payload for school_id: {request.headers.get('x-school-id')}")
+        print(f"[Sync] Counts: {len(data.get('students', []))} Students, {len(data.get('marks', []))} Marks, {len(data.get('users', []))} Users.")
+
         try:
-            # 1. Sync School Settings
+            # 1. Sync School Settings & Logo
             settings_data = data.get('settings')
             if settings_data:
                 setting, created = SchoolSetting.objects.get_or_create(id=1)
                 setting.school_name = settings_data.get('school_name', setting.school_name)
                 setting.reg_no = settings_data.get('registration_number', setting.reg_no)
                 setting.phone = settings_data.get('phone', setting.phone)
+                
+                # Handle Logo Upload (Base64)
+                logo_b64 = data.get('logo_base64')
+                if logo_b64:
+                    from django.core.files.base import ContentFile
+                    import base64
+                    try:
+                        format, imgstr = logo_b64.split(';base64,') if ';base64,' in logo_b64 else (None, logo_b64)
+                        ext = format.split('/')[-1] if format else 'png'
+                        setting.logo.save(f"logo_{setting.id}.{ext}", ContentFile(base64.b64decode(imgstr)), save=False)
+                        print(f"[Sync] Logo updated via base64.")
+                    except Exception as e:
+                        print(f"[Sync] Logo decoding error: {e}")
+                
                 setting.save()
                 print(f"[Sync] School Setting Updated: {setting.school_name}")
 
             # 2. Sync Users (Teacher/Admin Accounts)
             users_list = data.get('users', [])
             from django.contrib.auth.models import User
-            
             synced_users = 0
             for u in users_list:
-                # Prioritize 'phone' as the Django username because mobile apps use phone to login
-                p_number = u.get('phone', '').strip()
-                u_name = u.get('username', '').strip()
-                
-                # We use the phone number as the primary identifier for login compatibility 
-                # with mobile apps. If phone is missing, we use username.
+                p_number = str(u.get('phone', '')).strip()
+                u_name = str(u.get('username', '')).strip()
                 identifier = p_number if p_number else u_name
                 password = u.get('password')
                 role = u.get('role', 'teacher')
+                is_manager = u.get('manager_access', 0) == 1
                 
                 if not identifier or not password:
                     continue
                 
-                # Check if user exists
                 user, created = User.objects.get_or_create(username=identifier)
-                user.set_password(password) # Updates password from local PC
+                user.set_password(password)
                 user.is_staff = (role == 'admin')
-                user.is_superuser = (role == 'admin')
-                
-                # Store full name in first_name if available for convenience
+                user.is_superuser = (role == 'admin' or is_manager) # Managers get Pay Fee access
                 user.first_name = u.get('full_name', '')[:150]
-                
                 user.save()
                 synced_users += 1
-            
-            print(f"[Sync] {synced_users} User Accounts synchronized.")
+
+            # 3. Sync Students
+            students_list = data.get('students', [])
+            synced_students = 0
+            for s in students_list:
+                sid = s.get('sync_id')
+                if not sid: continue
+                obj, created = Student.objects.update_or_create(
+                    sync_id=sid,
+                    defaults={
+                        'name': s.get('name'),
+                        'father_name': s.get('father_name'),
+                        'class_name': s.get('class_name'),
+                        'section_name': s.get('section_name'),
+                        'phone': s.get('phone'),
+                        'admission_no': s.get('admission_no'),
+                        'roll_no': s.get('roll_no'),
+                        'status': s.get('status', 'Active'),
+                        'gender': s.get('gender'),
+                        'religion': s.get('religion'),
+                    }
+                )
+                synced_students += 1
+
+            # 4. Sync Exams
+            exams_list = data.get('exams', [])
+            synced_exams = 0
+            exam_map = {} # local_id -> cloud_id
+            for e in exams_list:
+                esid = e.get('sync_id') or f"exam_{e.get('id')}_{e.get('year')}"
+                obj, created = Exam.objects.update_or_create(
+                    sync_id=esid,
+                    defaults={
+                        'exam_name': e.get('exam_name'),
+                        'year': e.get('year', 2026),
+                    }
+                )
+                exam_map[e.get('id')] = obj
+                synced_exams += 1
+
+            # 5. Sync Marks
+            marks_list = data.get('marks', [])
+            synced_marks = 0
+            for m in marks_list:
+                msid = m.get('sync_id')
+                if not msid: continue
+                
+                # Link to student and exam
+                local_student_sid = m.get('student_sync_id')
+                local_exam_id = m.get('exam_id')
+                
+                try:
+                    student_obj = Student.objects.get(sync_id=local_student_sid)
+                    exam_obj = exam_map.get(local_exam_id)
+                    if not exam_obj:
+                         # Fallback if exam map fails (try finding by name/year if possible)
+                         exam_obj = Exam.objects.filter(exam_name=m.get('exam_name'), year=m.get('year')).first()
+                    
+                    if not exam_obj: continue
+
+                    Mark.objects.update_or_create(
+                        sync_id=msid,
+                        defaults={
+                            'student': student_obj,
+                            'exam': exam_obj,
+                            'subject': m.get('subject'),
+                            'marks': m.get('marks', 0),
+                            'term': m.get('term', '1st Term'),
+                        }
+                    )
+                    synced_marks += 1
+                except Student.DoesNotExist:
+                    continue
+
+            # 6. Sync Teacher Assignments (Timetable)
+            assignments_list = data.get('assignments', [])
+            synced_assignments = 0
+            for a in assignments_list:
+                asid = a.get('sync_id')
+                if not asid: continue
+                TeacherClassAssignment.objects.update_or_create(
+                    sync_id=asid,
+                    defaults={
+                        'teacher_id': a.get('teacher_id'),
+                        'class_name': a.get('class_name'),
+                        'section_name': a.get('section_name', 'Default'),
+                        'is_primary': True
+                    }
+                )
+                synced_assignments += 1
+
+            # 7. Sync Attendance
+            attendance_list = data.get('attendance', [])
+            synced_attendance = 0
+            for att in attendance_list:
+                asid = att.get('sync_id')
+                if not asid: 
+                    asid = f"{att.get('student_sync_id')}_{att.get('date', 'nodate')}"
+                
+                try:
+                    student_obj = Student.objects.get(sync_id=att.get('student_sync_id'))
+                    Attendance.objects.update_or_create(
+                        sync_id=asid,
+                        defaults={
+                            'student': student_obj,
+                            'date': att.get('date'),
+                            'status': att.get('status'),
+                            'class_name': att.get('class_name'),
+                            'section_name': att.get('section_name'),
+                        }
+                    )
+                    synced_attendance += 1
+                except Student.DoesNotExist:
+                    continue
+
+            # 8. Sync Timetable
+            timetable_list = data.get('timetable', [])
+            synced_timetable = 0
+            for t in timetable_list:
+                tsid = t.get('sync_id')
+                if not tsid: continue
+                Timetable.objects.update_or_create(
+                    sync_id=tsid,
+                    defaults={
+                        'class_name': t.get('class_name'),
+                        'section_name': t.get('section_name'),
+                        'day': t.get('day'),
+                        'subject': t.get('subject'),
+                        'teacher_id': t.get('teacher_id'),
+                        'teacher_name': t.get('teacher_name'),
+                        'start_time': t.get('start_time'),
+                        'end_time': t.get('end_time'),
+                    }
+                )
+                synced_timetable += 1
+
+            # 9. Sync Announcements
+            announcements_list = data.get('announcements', [])
+            synced_announcements = 0
+            for ann in announcements_list:
+                asid = ann.get('sync_id')
+                if not asid: continue
+                Announcement.objects.update_or_create(
+                    sync_id=asid,
+                    defaults={
+                        'title': ann.get('title'),
+                        'content': ann.get('content'),
+                        'class_name': ann.get('class_name'),
+                        'section_name': ann.get('section_name'),
+                        'created_at': ann.get('created_at'),
+                    }
+                )
+                synced_announcements += 1
 
             return Response({
                 "status": "success",
-                "message": f"Successfully synchronized school settings and {synced_users} user accounts."
+                "message": (f"Successfully synchronized: {synced_users} Users, {synced_students} Students, "
+                            f"{synced_exams} Exams, {synced_marks} Marks, {synced_attendance} Attendance, "
+                            f"{synced_timetable} Timetable, {synced_announcements} Announcements.")
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
             print(f"[Sync] CRITICAL ERROR: {e}")
-            return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            import traceback
+            traceback.print_exc()
+            return Response({"status": "error", "message": f"Sync Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

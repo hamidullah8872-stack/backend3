@@ -11,6 +11,7 @@ from .views import (
     SchoolInfoView,
     SchoolLogoView,
     SyncDataView,
+    TimetableViewSet,
 )
 from .views_auth import LoginView
 from .debug_views import DbDebugView
@@ -22,6 +23,7 @@ router.register(r'attendance', AttendanceViewSet)
 router.register(r'fee_ledgers', FeeLedgerViewSet)
 router.register(r'exams', ExamViewSet)
 router.register(r'marks', MarkViewSet)
+router.register(r'timetable', TimetableViewSet)
 
 urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),

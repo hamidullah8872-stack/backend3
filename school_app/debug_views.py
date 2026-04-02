@@ -1,9 +1,10 @@
 import os
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.db import connection
-from django.conf import settings
 from rest_framework.permissions import AllowAny
+from .models import Student, Exam, Mark, Attendance, Timetable, Announcement, SchoolSetting
+from django.contrib.auth.models import User
 
 class DbDebugView(APIView):
     permission_classes = [AllowAny]
@@ -13,12 +14,22 @@ class DbDebugView(APIView):
     """
     def get(self, request):
         db_config = settings.DATABASES['default']
+        
+        counts = {
+            "users": User.objects.count(),
+            "students": Student.objects.count(),
+            "exams": Exam.objects.count(),
+            "marks": Mark.objects.count(),
+            "attendance": Attendance.objects.count(),
+            "timetable": Timetable.objects.count(),
+            "announcements": Announcement.objects.count(),
+            "settings": SchoolSetting.objects.count(),
+        }
+
         debug_info = {
             "database_url_present": bool(os.environ.get('DATABASE_URL')),
             "database_engine": db_config.get('ENGINE'),
-            "database_host": db_config.get('HOST', 'Not Set'),
-            "database_port": db_config.get('PORT', 'Not Set'),
-            "database_user": db_config.get('USER', 'Not Set')[:10] + "..." if db_config.get('USER') else "Not Set",
+            "counts": counts,
             "tables": [],
             "error": None
         }
