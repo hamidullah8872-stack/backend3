@@ -18,6 +18,8 @@ touch staticfiles_build/placeholder.txt
 python manage.py collectstatic --noinput --clear || echo "collectstatic failed, but directory exists"
 
 # Run migrations
+echo "RUNNING MIGRATIONS..."
+python manage.py makemigrations school_app --noinput
 python manage.py migrate --noinput
 
 echo "BUILD END"

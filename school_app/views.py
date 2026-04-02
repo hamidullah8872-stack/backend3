@@ -311,6 +311,7 @@ class SyncDataView(APIView):
             students_list = data.get('students', [])
             synced_students = 0
             for s in students_list:
+                if not s or not isinstance(s, dict): continue
                 sid = s.get('sync_id')
                 if not sid: continue
                 obj, created = Student.objects.update_or_create(
@@ -335,6 +336,7 @@ class SyncDataView(APIView):
             synced_exams = 0
             exam_map = {} # local_id -> cloud_id
             for e in exams_list:
+                if not e or not isinstance(e, dict): continue
                 esid = e.get('sync_id') or f"exam_{e.get('id')}_{e.get('year')}"
                 obj, created = Exam.objects.update_or_create(
                     sync_id=esid,
@@ -350,6 +352,7 @@ class SyncDataView(APIView):
             marks_list = data.get('marks', [])
             synced_marks = 0
             for m in marks_list:
+                if not m or not isinstance(m, dict): continue
                 msid = m.get('sync_id')
                 if not msid: continue
                 
@@ -384,6 +387,7 @@ class SyncDataView(APIView):
             assignments_list = data.get('assignments', [])
             synced_assignments = 0
             for a in assignments_list:
+                if not a or not isinstance(a, dict): continue
                 asid = a.get('sync_id')
                 if not asid: continue
                 TeacherClassAssignment.objects.update_or_create(
@@ -401,9 +405,10 @@ class SyncDataView(APIView):
             attendance_list = data.get('attendance', [])
             synced_attendance = 0
             for att in attendance_list:
+                if not att or not isinstance(att, dict): continue
                 asid = att.get('sync_id')
                 if not asid: 
-                    asid = f"{att.get('student_sync_id')}_{att.get('date', 'nodate')}"
+                    asid = f"{att.get('student_sync_id', 'unknown')}_{att.get('date', 'nodate')}"
                 
                 try:
                     student_obj = Student.objects.get(sync_id=att.get('student_sync_id'))
@@ -425,6 +430,7 @@ class SyncDataView(APIView):
             timetable_list = data.get('timetable', [])
             synced_timetable = 0
             for t in timetable_list:
+                if not t or not isinstance(t, dict): continue
                 tsid = t.get('sync_id')
                 if not tsid: continue
                 Timetable.objects.update_or_create(
@@ -446,6 +452,7 @@ class SyncDataView(APIView):
             announcements_list = data.get('announcements', [])
             synced_announcements = 0
             for ann in announcements_list:
+                if not ann or not isinstance(ann, dict): continue
                 asid = ann.get('sync_id')
                 if not asid: continue
                 Announcement.objects.update_or_create(
