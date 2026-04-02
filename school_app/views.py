@@ -268,18 +268,28 @@ class SyncDataView(APIView):
             
             synced_users = 0
             for u in users_list:
-                username = u.get('username')
+                # Prioritize 'phone' as the Django username because mobile apps use phone to login
+                p_number = u.get('phone', '').strip()
+                u_name = u.get('username', '').strip()
+                
+                # We use the phone number as the primary identifier for login compatibility 
+                # with mobile apps. If phone is missing, we use username.
+                identifier = p_number if p_number else u_name
                 password = u.get('password')
                 role = u.get('role', 'teacher')
                 
-                if not username or not password:
+                if not identifier or not password:
                     continue
                 
                 # Check if user exists
-                user, created = User.objects.get_or_create(username=username)
+                user, created = User.objects.get_or_create(username=identifier)
                 user.set_password(password) # Updates password from local PC
                 user.is_staff = (role == 'admin')
                 user.is_superuser = (role == 'admin')
+                
+                # Store full name in first_name if available for convenience
+                user.first_name = u.get('full_name', '')[:150]
+                
                 user.save()
                 synced_users += 1
             
