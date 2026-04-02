@@ -5,6 +5,7 @@ from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from .models import Student, Section, Attendance, FeeLedger, Exam, Mark, TeacherClassAssignment, SchoolSetting, Timetable, Announcement
 from django.http import HttpResponse
 from .serializers import StudentSerializer, SectionSerializer, AttendanceSerializer, FeeLedgerSerializer, ExamSerializer, MarkSerializer, TimetableSerializer
@@ -24,8 +25,6 @@ class MultiTenantMixin:
 class StudentViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
-
-    from rest_framework.decorators import action
 
     @action(detail=False, url_path='class/(?P<class_name>[^/.]+)/students')
     def by_class(self, request, class_name=None):
