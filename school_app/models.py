@@ -1,6 +1,7 @@
 from django.db import models
 
 class Student(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     student_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     admission_no = models.CharField(max_length=100, null=True, blank=True)
     roll_no = models.CharField(max_length=50, null=True, blank=True)
@@ -33,6 +34,7 @@ class Student(models.Model):
         return f"{self.name} - {self.class_name}"
 
 class Section(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     class_name = models.CharField(max_length=100)
     section_name = models.CharField(max_length=100)
 
@@ -43,6 +45,7 @@ class Section(models.Model):
         return f"{self.class_name} - {self.section_name}"
 
 class Attendance(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='attendances')
     class_name = models.CharField(max_length=100)
     section_name = models.CharField(max_length=100, null=True, blank=True)
@@ -56,6 +59,7 @@ class Attendance(models.Model):
         unique_together = ('student', 'date')
 
 class FeeLedger(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='fee_ledgers')
     class_name = models.CharField(max_length=100)
     month = models.CharField(max_length=50)
@@ -70,6 +74,7 @@ class FeeLedger(models.Model):
     created_at = models.CharField(max_length=50, null=True, blank=True)
 
 class Exam(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     exam_name = models.CharField(max_length=200)
     year = models.IntegerField()
     sync_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
@@ -79,6 +84,7 @@ class Exam(models.Model):
         return f"{self.exam_name} ({self.year})"
 
 class Mark(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='marks')
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE)
     subject = models.CharField(max_length=100)
@@ -92,6 +98,7 @@ class Mark(models.Model):
 
 
 class TeacherClassAssignment(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     teacher_id = models.IntegerField(db_index=True)
     class_name = models.CharField(max_length=100)
     section_name = models.CharField(max_length=100, null=True, blank=True)
@@ -112,6 +119,7 @@ class TeacherClassAssignment(models.Model):
         return f"Teacher {self.teacher_id}: {self.class_name}{section}"
 
 class Timetable(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     class_name = models.CharField(max_length=100)
     section_name = models.CharField(max_length=100, null=True, blank=True)
     day = models.CharField(max_length=20)
@@ -128,6 +136,7 @@ class Timetable(models.Model):
 
 
 class SchoolSetting(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     school_name = models.CharField(max_length=255, default="Skyronix Model School")
     logo = models.ImageField(upload_to='school_logos/', null=True, blank=True)
     reg_no = models.CharField(max_length=100, null=True, blank=True)
@@ -142,6 +151,7 @@ class SchoolSetting(models.Model):
         return cls.objects.first() or cls(school_name="Skyronix Model School")
 
 class Announcement(models.Model):
+    school_id = models.CharField(max_length=100, null=True, blank=True)
     title = models.CharField(max_length=255)
     content = models.TextField()
     class_name = models.CharField(max_length=100, null=True, blank=True)

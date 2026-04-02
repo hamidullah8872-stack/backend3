@@ -12,15 +12,40 @@ from .serializers import StudentSerializer, SectionSerializer, AttendanceSeriali
 def health_check(request):
     return HttpResponse("School Management System Backend is Online", status=200)
 
-class StudentViewSet(viewsets.ModelViewSet):
+class MultiTenantMixin:
+    """Helper to filter objects by school_id from headers."""
+    def get_queryset(self):
+        school_id = self.request.headers.get('x-school-id') or self.request.query_params.get('school_id')
+        queryset = super().get_queryset()
+        if school_id:
+            return queryset.filter(school_id=school_id)
+        return queryset
+
+class StudentViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
 
-class SectionViewSet(viewsets.ModelViewSet):
+    from rest_framework.decorators import action
+
+    @action(detail=False, url_path='class/(?P<class_name>[^/.]+)/students')
+    def by_class(self, request, class_name=None):
+        section_name = request.query_params.get('section')
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        
+        queryset = Student.objects.filter(class_name__iexact=class_name)
+        if section_name:
+            queryset = queryset.filter(section_name__iexact=section_name)
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+            
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+class SectionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Section.objects.all()
     serializer_class = SectionSerializer
 
-class AttendanceViewSet(viewsets.ModelViewSet):
+class AttendanceViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
 
@@ -38,6 +63,34 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(section_name=section_name)
 
         return queryset
+
+    @action(detail=False, methods=['post'], url_path='submit-bulk')
+    def submit_bulk(self, request):
+        records = request.data
+        if not isinstance(records, list):
+            return Response({"status": "error", "message": "Expected a list of records"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        synced = 0
+        for r in records:
+            try:
+                student = Student.objects.get(id=r.get('student'))
+                sync_id = f"{student.sync_id}_{r.get('date')}_{r.get('class_name')}"
+                Attendance.objects.update_or_create(
+                    student=student,
+                    date=r.get('date'),
+                    defaults={
+                        'school_id': school_id,
+                        'status': r.get('status', 'Present'),
+                        'class_name': r.get('class_name', ''),
+                        'section_name': r.get('section_name', ''),
+                        'sync_id': sync_id,
+                    }
+                )
+                synced += 1
+            except Student.DoesNotExist:
+                continue
+        return Response({"status": "success", "synced": synced})
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -65,21 +118,49 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(output.data, status=response_status)
 
-class FeeLedgerViewSet(viewsets.ModelViewSet):
+class FeeLedgerViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = FeeLedger.objects.all()
     serializer_class = FeeLedgerSerializer
 
-class ExamViewSet(viewsets.ModelViewSet):
+class ExamViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Exam.objects.all()
     serializer_class = ExamSerializer
 
-class MarkViewSet(viewsets.ModelViewSet):
+class MarkViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Mark.objects.all()
     serializer_class = MarkSerializer
 
-class TimetableViewSet(viewsets.ModelViewSet):
+class TimetableViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Timetable.objects.all()
     serializer_class = TimetableSerializer
+
+class AnnouncementViewSet(MultiTenantMixin, viewsets.ModelViewSet):
+    queryset = Announcement.objects.all()
+    from .serializers import AnnouncementSerializer
+    serializer_class = AnnouncementSerializer
+
+class AllSectionsView(APIView):
+    """Returns all unique classes and sections."""
+    def get(self, request):
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        queryset = Section.objects.all()
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+        
+        sections = list(queryset.values('class_name', 'section_name').distinct())
+        return Response(sections)
+
+class TeacherAssignmentsView(APIView):
+    """Returns assignments for a specific teacher."""
+    def get(self, request, teacher_id):
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        queryset = TeacherClassAssignment.objects.filter(teacher_id=teacher_id)
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+            
+        from .serializers import TeacherClassAssignmentSerializer
+        serializer = TeacherClassAssignmentSerializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 class TeacherMonthlyAttendanceHistoryView(APIView):
@@ -252,26 +333,23 @@ class SyncDataView(APIView):
 
     def post(self, request):
         data = request.data
+        school_id = request.headers.get('x-school-id') or '123456'
         if not data:
-            print("[Sync] Error: No data received in request.")
+            print(f"[Sync] Error: No data received for school_id: {school_id}")
             return Response({"status": "error", "message": "No data received"}, status=status.HTTP_400_BAD_REQUEST)
 
-        print(f"[Sync] Received payload for school_id: {request.headers.get('x-school-id')}")
+        print(f"[Sync] Received payload for school_id: {school_id}")
         students_payload = data.get('students', [])
-        print(f"[Sync] Counts: {len(students_payload)} Students, {len(data.get('marks', []))} Marks, {len(data.get('users', []))} Users.")
-        if len(students_payload) > 0:
-            print(f"[Sync] Sample Student 1: {students_payload[0].get('name')} (SID: {students_payload[0].get('sync_id')})")
-
+        
         try:
             # 1. Sync School Settings & Logo
             settings_data = data.get('settings')
             if settings_data:
-                setting, created = SchoolSetting.objects.get_or_create(id=1)
+                setting, created = SchoolSetting.objects.get_or_create(school_id=school_id)
                 setting.school_name = settings_data.get('school_name', setting.school_name)
                 setting.reg_no = settings_data.get('registration_number', setting.reg_no)
                 setting.phone = settings_data.get('phone', setting.phone)
                 
-                # Handle Logo Upload (Base64)
                 logo_b64 = data.get('logo_base64')
                 if logo_b64:
                     from django.core.files.base import ContentFile
@@ -279,34 +357,29 @@ class SyncDataView(APIView):
                     try:
                         format, imgstr = logo_b64.split(';base64,') if ';base64,' in logo_b64 else (None, logo_b64)
                         ext = format.split('/')[-1] if format else 'png'
-                        setting.logo.save(f"logo_{setting.id}.{ext}", ContentFile(base64.b64decode(imgstr)), save=False)
-                        print(f"[Sync] Logo updated via base64.")
+                        setting.logo.save(f"logo_{school_id}.{ext}", ContentFile(base64.b64decode(imgstr)), save=False)
                     except Exception as e:
                         print(f"[Sync] Logo decoding error: {e}")
                 
                 setting.save()
-                print(f"[Sync] School Setting Updated: {setting.school_name}")
 
-            # 2. Sync Users (Teacher/Admin Accounts)
+            # 2. Sync Users
             users_list = data.get('users', [])
             from django.contrib.auth.models import User
             synced_users = 0
             for u in users_list:
                 if not u or not isinstance(u, dict): continue
-                p_number = str(u.get('phone', '')).strip()
-                u_name = str(u.get('username', '')).strip()
-                identifier = p_number if p_number else u_name
+                identifier = str(u.get('phone', u.get('username', ''))).strip()
                 password = u.get('password')
                 role = u.get('role', 'teacher')
                 is_manager = u.get('manager_access', 0) == 1
                 
-                if not identifier or not password:
-                    continue
+                if not identifier or not password: continue
                 
-                user, created = User.objects.get_or_create(username=identifier)
+                user, _ = User.objects.get_or_create(username=identifier)
                 user.set_password(password)
                 user.is_staff = (role == 'admin')
-                user.is_superuser = (role == 'admin' or is_manager) # Managers get Pay Fee access
+                user.is_superuser = (role == 'admin' or is_manager)
                 user.first_name = (u.get('full_name') or '')[:150]
                 user.save()
                 synced_users += 1
@@ -317,42 +390,37 @@ class SyncDataView(APIView):
             for s in students_list:
                 if not s or not isinstance(s, dict): continue
                 sid = s.get('sync_id')
-                if not sid:
-                    print(f"[Sync] ERROR: Student found with NO SYNC_ID: {s.get('name')}")
-                    continue
+                if not sid: continue
                 
-                try:
-                    obj, created = Student.objects.update_or_create(
-                        sync_id=sid,
-                        defaults={
-                            'name': (s.get('name') or '')[:200],
-                            'father_name': (s.get('father_name') or '')[:200],
-                            'class_name': (s.get('class_name') or '')[:100],
-                            'section_name': (s.get('section_name') or '')[:100],
-                            'phone': (s.get('phone') or '')[:50],
-                            'admission_no': (s.get('admission_no') or '')[:100],
-                            'roll_no': (s.get('roll_no') or '')[:50],
-                            'status': (s.get('status') or 'Active')[:50],
-                            'gender': (s.get('gender') or '')[:20],
-                            'religion': (s.get('religion') or '')[:100],
-                        }
-                    )
-                    synced_students += 1
-                except Exception as e:
-                    print(f"[Sync] ERROR saving student {sid}: {e}")
-
-            print(f"[Sync] Processed {synced_students} Students out of {len(students_list)} sent.")
+                Student.objects.update_or_create(
+                    sync_id=sid,
+                    defaults={
+                        'school_id': school_id,
+                        'name': (s.get('name') or '')[:200],
+                        'father_name': (s.get('father_name') or '')[:200],
+                        'class_name': (s.get('class_name') or '')[:100],
+                        'section_name': (s.get('section_name') or '')[:100],
+                        'phone': (s.get('phone') or '')[:50],
+                        'admission_no': (s.get('admission_no') or '')[:100],
+                        'roll_no': (s.get('roll_no') or '')[:50],
+                        'status': (s.get('status') or 'Active')[:50],
+                        'gender': (s.get('gender') or '')[:20],
+                        'religion': (s.get('religion') or '')[:100],
+                    }
+                )
+                synced_students += 1
 
             # 4. Sync Exams
             exams_list = data.get('exams', [])
             synced_exams = 0
-            exam_map = {} # local_id -> cloud_id
+            exam_map = {}
             for e in exams_list:
                 if not e or not isinstance(e, dict): continue
-                esid = e.get('sync_id') or f"exam_{e.get('id')}_{e.get('year')}"
-                obj, created = Exam.objects.update_or_create(
+                esid = e.get('sync_id') or f"exam_{school_id}_{e.get('exam_name')}_{e.get('year')}"
+                obj, _ = Exam.objects.update_or_create(
                     sync_id=esid,
                     defaults={
+                        'school_id': school_id,
                         'exam_name': e.get('exam_name'),
                         'year': e.get('year', 2026),
                     }
@@ -368,22 +436,15 @@ class SyncDataView(APIView):
                 msid = m.get('sync_id')
                 if not msid: continue
                 
-                # Link to student and exam
-                local_student_sid = m.get('student_sync_id')
-                local_exam_id = m.get('exam_id')
-                
                 try:
-                    student_obj = Student.objects.get(sync_id=local_student_sid)
-                    exam_obj = exam_map.get(local_exam_id)
-                    if not exam_obj:
-                         # Fallback if exam map fails (try finding by name/year if possible)
-                         exam_obj = Exam.objects.filter(exam_name=m.get('exam_name'), year=m.get('year')).first()
-                    
+                    student_obj = Student.objects.get(sync_id=m.get('student_sync_id'))
+                    exam_obj = exam_map.get(m.get('exam_id')) or Exam.objects.filter(exam_name=m.get('exam_name'), year=m.get('year'), school_id=school_id).first()
                     if not exam_obj: continue
 
                     Mark.objects.update_or_create(
                         sync_id=msid,
                         defaults={
+                            'school_id': school_id,
                             'student': student_obj,
                             'exam': exam_obj,
                             'subject': m.get('subject'),
@@ -395,7 +456,7 @@ class SyncDataView(APIView):
                 except Student.DoesNotExist:
                     continue
 
-            # 6. Sync Teacher Assignments (Timetable)
+            # 6. Sync Teacher Assignments
             assignments_list = data.get('assignments', [])
             synced_assignments = 0
             for a in assignments_list:
@@ -405,6 +466,7 @@ class SyncDataView(APIView):
                 TeacherClassAssignment.objects.update_or_create(
                     sync_id=asid,
                     defaults={
+                        'school_id': school_id,
                         'teacher_id': a.get('teacher_id'),
                         'class_name': a.get('class_name'),
                         'section_name': a.get('section_name', 'Default'),
@@ -418,15 +480,14 @@ class SyncDataView(APIView):
             synced_attendance = 0
             for att in attendance_list:
                 if not att or not isinstance(att, dict): continue
-                asid = att.get('sync_id')
-                if not asid: 
-                    asid = f"{att.get('student_sync_id', 'unknown')}_{att.get('date', 'nodate')}"
+                asid = att.get('sync_id') or f"{att.get('student_sync_id')}_{att.get('date')}_{att.get('class_name')}"
                 
                 try:
                     student_obj = Student.objects.get(sync_id=att.get('student_sync_id'))
                     Attendance.objects.update_or_create(
                         sync_id=asid,
                         defaults={
+                            'school_id': school_id,
                             'student': student_obj,
                             'date': att.get('date'),
                             'status': att.get('status'),
@@ -448,6 +509,7 @@ class SyncDataView(APIView):
                 Timetable.objects.update_or_create(
                     sync_id=tsid,
                     defaults={
+                        'school_id': school_id,
                         'class_name': t.get('class_name'),
                         'section_name': t.get('section_name'),
                         'day': t.get('day'),
@@ -470,6 +532,7 @@ class SyncDataView(APIView):
                 Announcement.objects.update_or_create(
                     sync_id=asid,
                     defaults={
+                        'school_id': school_id,
                         'title': ann.get('title'),
                         'content': ann.get('content'),
                         'class_name': ann.get('class_name'),
@@ -497,7 +560,4 @@ class SyncDataView(APIView):
             import traceback
             error_details = traceback.format_exc()
             print(f"[Sync] CRITICAL ERROR: {error_details}")
-            return Response({
-                "status": "error", 
-                "message": f"Sync Error: {error_details}"
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"status": "error", "message": f"Sync Error: {error_details}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
