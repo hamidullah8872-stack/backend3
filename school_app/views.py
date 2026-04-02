@@ -292,6 +292,7 @@ class SyncDataView(APIView):
             from django.contrib.auth.models import User
             synced_users = 0
             for u in users_list:
+                if not u or not isinstance(u, dict): continue
                 p_number = str(u.get('phone', '')).strip()
                 u_name = str(u.get('username', '')).strip()
                 identifier = p_number if p_number else u_name
