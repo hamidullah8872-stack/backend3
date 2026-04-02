@@ -307,7 +307,7 @@ class SyncDataView(APIView):
                 user.set_password(password)
                 user.is_staff = (role == 'admin')
                 user.is_superuser = (role == 'admin' or is_manager) # Managers get Pay Fee access
-                user.first_name = u.get('full_name', '')[:150]
+                user.first_name = (u.get('full_name') or '')[:150]
                 user.save()
                 synced_users += 1
 
@@ -325,16 +325,16 @@ class SyncDataView(APIView):
                     obj, created = Student.objects.update_or_create(
                         sync_id=sid,
                         defaults={
-                            'name': s.get('name'),
-                            'father_name': s.get('father_name'),
-                            'class_name': s.get('class_name'),
-                            'section_name': s.get('section_name'),
-                            'phone': s.get('phone'),
-                            'admission_no': s.get('admission_no'),
-                            'roll_no': s.get('roll_no'),
-                            'status': s.get('status', 'Active'),
-                            'gender': s.get('gender'),
-                            'religion': s.get('religion'),
+                            'name': (s.get('name') or '')[:200],
+                            'father_name': (s.get('father_name') or '')[:200],
+                            'class_name': (s.get('class_name') or '')[:100],
+                            'section_name': (s.get('section_name') or '')[:100],
+                            'phone': (s.get('phone') or '')[:50],
+                            'admission_no': (s.get('admission_no') or '')[:100],
+                            'roll_no': (s.get('roll_no') or '')[:50],
+                            'status': (s.get('status') or 'Active')[:50],
+                            'gender': (s.get('gender') or '')[:20],
+                            'religion': (s.get('religion') or '')[:100],
                         }
                     )
                     synced_students += 1
