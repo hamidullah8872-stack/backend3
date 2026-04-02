@@ -481,13 +481,23 @@ class SyncDataView(APIView):
 
             return Response({
                 "status": "success",
-                "message": (f"Successfully synchronized: {synced_users} Users, {synced_students} Students, "
-                            f"{synced_exams} Exams, {synced_marks} Marks, {synced_attendance} Attendance, "
-                            f"{synced_timetable} Timetable, {synced_announcements} Announcements.")
+                "message": "Synchronization completed.",
+                "counts": {
+                    "users": synced_users,
+                    "students": synced_students,
+                    "exams": synced_exams,
+                    "marks": synced_marks,
+                    "attendance": synced_attendance,
+                    "timetable": synced_timetable,
+                    "announcements": synced_announcements,
+                }
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
             print(f"[Sync] CRITICAL ERROR: {error_details}")
-            return Response({"status": "error", "message": f"Sync Error: {error_details}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({
+                "status": "error", 
+                "message": f"Sync Error: {error_details}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
