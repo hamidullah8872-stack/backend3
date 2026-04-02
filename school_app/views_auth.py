@@ -58,9 +58,17 @@ class LoginView(APIView):
                 }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"[LoginView] CRITICAL ERROR during authenticate: {e}")
+            error_msg = str(e)
+            print(f"[LoginView] CRITICAL ERROR during authenticate: {error_msg}")
+            
+            detail = ""
+            if "failed to resolve host" in error_msg:
+                detail = " (DNS issues detected. Check your DATABASE_URL in Vercel settings.)"
+            elif "Device or resource busy" in error_msg:
+                detail = " (Resource busy error sometimes indicates a problem with Python's DNS resolver on Vercel. Try using a Supabase Pooler URL.)"
+
             return Response(
-                {"status": "error", "message": f"Server Error during login: {str(e)}"},
+                {"status": "error", "message": f"Server Error during login: {error_msg}{detail}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

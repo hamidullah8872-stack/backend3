@@ -10,6 +10,7 @@ from .views import (
     TeacherMonthlyAttendanceHistoryView,
     SchoolInfoView,
     SchoolLogoView,
+    SyncDataView,
 )
 from .views_auth import LoginView
 from .debug_views import DbDebugView
@@ -27,6 +28,7 @@ urlpatterns = [
     path('school/info/', SchoolInfoView.as_view(), name='school_info'),
     path('school/logo/', SchoolLogoView.as_view(), name='school_logo'),
     path('db-debug/', DbDebugView.as_view(), name='db_debug'),
+    path('sync/', SyncDataView.as_view(), name='sync_data'),
     path('teachers/<int:teacher_id>/monthly-attendance-history/', TeacherMonthlyAttendanceHistoryView.as_view()),
     path('', include(router.urls)),
 ]

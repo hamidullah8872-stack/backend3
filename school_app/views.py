@@ -240,4 +240,56 @@ class SchoolLogoView(APIView):
         setting = SchoolSetting.get_active()
         if setting.logo:
             return HttpResponse(setting.logo.read(), content_type="image/png")
-        return HttpResponse("No logo found", status=404)
+class SyncDataView(APIView):
+    """
+    Receives and synchronizes bulk data from the PC application (SQLite) 
+    to the cloud (Supabase/PostgreSQL).
+    """
+
+    def post(self, request):
+        data = request.data
+        if not data:
+            return Response({"status": "error", "message": "No data received"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # 1. Sync School Settings
+            settings_data = data.get('settings')
+            if settings_data:
+                setting, created = SchoolSetting.objects.get_or_create(id=1)
+                setting.school_name = settings_data.get('school_name', setting.school_name)
+                setting.reg_no = settings_data.get('registration_number', setting.reg_no)
+                setting.phone = settings_data.get('phone', setting.phone)
+                setting.save()
+                print(f"[Sync] School Setting Updated: {setting.school_name}")
+
+            # 2. Sync Users (Teacher/Admin Accounts)
+            users_list = data.get('users', [])
+            from django.contrib.auth.models import User
+            
+            synced_users = 0
+            for u in users_list:
+                username = u.get('username')
+                password = u.get('password')
+                role = u.get('role', 'teacher')
+                
+                if not username or not password:
+                    continue
+                
+                # Check if user exists
+                user, created = User.objects.get_or_create(username=username)
+                user.set_password(password) # Updates password from local PC
+                user.is_staff = (role == 'admin')
+                user.is_superuser = (role == 'admin')
+                user.save()
+                synced_users += 1
+            
+            print(f"[Sync] {synced_users} User Accounts synchronized.")
+
+            return Response({
+                "status": "success",
+                "message": f"Successfully synchronized school settings and {synced_users} user accounts."
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"[Sync] CRITICAL ERROR: {e}")
+            return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

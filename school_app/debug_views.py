@@ -1,3 +1,4 @@
+import os
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.db import connection
@@ -11,9 +12,13 @@ class DbDebugView(APIView):
     engine, and required tables.
     """
     def get(self, request):
+        db_config = settings.DATABASES['default']
         debug_info = {
             "database_url_present": bool(os.environ.get('DATABASE_URL')),
-            "database_engine": settings.DATABASES['default'].get('ENGINE'),
+            "database_engine": db_config.get('ENGINE'),
+            "database_host": db_config.get('HOST', 'Not Set'),
+            "database_port": db_config.get('PORT', 'Not Set'),
+            "database_user": db_config.get('USER', 'Not Set')[:10] + "..." if db_config.get('USER') else "Not Set",
             "tables": [],
             "error": None
         }
