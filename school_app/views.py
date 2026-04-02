@@ -313,23 +313,31 @@ class SyncDataView(APIView):
             for s in students_list:
                 if not s or not isinstance(s, dict): continue
                 sid = s.get('sync_id')
-                if not sid: continue
-                obj, created = Student.objects.update_or_create(
-                    sync_id=sid,
-                    defaults={
-                        'name': s.get('name'),
-                        'father_name': s.get('father_name'),
-                        'class_name': s.get('class_name'),
-                        'section_name': s.get('section_name'),
-                        'phone': s.get('phone'),
-                        'admission_no': s.get('admission_no'),
-                        'roll_no': s.get('roll_no'),
-                        'status': s.get('status', 'Active'),
-                        'gender': s.get('gender'),
-                        'religion': s.get('religion'),
-                    }
-                )
-                synced_students += 1
+                if not sid:
+                    print(f"[Sync] ERROR: Student found with NO SYNC_ID: {s.get('name')}")
+                    continue
+                
+                try:
+                    obj, created = Student.objects.update_or_create(
+                        sync_id=sid,
+                        defaults={
+                            'name': s.get('name'),
+                            'father_name': s.get('father_name'),
+                            'class_name': s.get('class_name'),
+                            'section_name': s.get('section_name'),
+                            'phone': s.get('phone'),
+                            'admission_no': s.get('admission_no'),
+                            'roll_no': s.get('roll_no'),
+                            'status': s.get('status', 'Active'),
+                            'gender': s.get('gender'),
+                            'religion': s.get('religion'),
+                        }
+                    )
+                    synced_students += 1
+                except Exception as e:
+                    print(f"[Sync] ERROR saving student {sid}: {e}")
+
+            print(f"[Sync] Processed {synced_students} Students out of {len(students_list)} sent.")
 
             # 4. Sync Exams
             exams_list = data.get('exams', [])
