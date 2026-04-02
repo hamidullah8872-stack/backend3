@@ -468,7 +468,7 @@ class SyncDataView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"[Sync] CRITICAL ERROR: {e}")
             import traceback
-            traceback.print_exc()
-            return Response({"status": "error", "message": f"Sync Error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            error_details = traceback.format_exc()
+            print(f"[Sync] CRITICAL ERROR: {error_details}")
+            return Response({"status": "error", "message": f"Sync Error: {error_details}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

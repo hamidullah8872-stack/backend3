@@ -13,6 +13,7 @@ class DbDebugView(APIView):
     engine, and required tables.
     """
     def get(self, request):
+        from django.db import connection
         db_config = settings.DATABASES['default']
         
         counts = {
