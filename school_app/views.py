@@ -257,7 +257,10 @@ class SyncDataView(APIView):
             return Response({"status": "error", "message": "No data received"}, status=status.HTTP_400_BAD_REQUEST)
 
         print(f"[Sync] Received payload for school_id: {request.headers.get('x-school-id')}")
-        print(f"[Sync] Counts: {len(data.get('students', []))} Students, {len(data.get('marks', []))} Marks, {len(data.get('users', []))} Users.")
+        students_payload = data.get('students', [])
+        print(f"[Sync] Counts: {len(students_payload)} Students, {len(data.get('marks', []))} Marks, {len(data.get('users', []))} Users.")
+        if len(students_payload) > 0:
+            print(f"[Sync] Sample Student 1: {students_payload[0].get('name')} (SID: {students_payload[0].get('sync_id')})")
 
         try:
             # 1. Sync School Settings & Logo
