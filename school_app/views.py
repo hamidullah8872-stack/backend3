@@ -16,11 +16,10 @@ def health_check(request):
 class MultiTenantMixin:
     """Helper to filter objects by school_id from headers."""
     def get_queryset(self):
-        school_id = self.request.headers.get('x-school-id') or self.request.query_params.get('school_id')
+        # Default to '123456' for compatibility during migration
+        school_id = self.request.headers.get('x-school-id') or self.request.query_params.get('school_id') or '123456'
         queryset = super().get_queryset()
-        if school_id:
-            return queryset.filter(school_id=school_id)
-        return queryset
+        return queryset.filter(school_id=school_id)
 
 class StudentViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Student.objects.all()
@@ -330,6 +329,7 @@ class SyncDataView(APIView):
     to the cloud (Supabase/PostgreSQL).
     """
 
+    @transaction.atomic
     def post(self, request):
         data = request.data
         school_id = request.headers.get('x-school-id') or '123456'
@@ -337,13 +337,13 @@ class SyncDataView(APIView):
             print(f"[Sync] Error: No data received for school_id: {school_id}")
             return Response({"status": "error", "message": "No data received"}, status=status.HTTP_400_BAD_REQUEST)
 
-        print(f"[Sync] Received payload for school_id: {school_id}")
-        students_payload = data.get('students', [])
+        print(f"[Sync] >>> STARTING FULL SYNC for school_id: {school_id} <<<")
         
         try:
             # 1. Sync School Settings & Logo
             settings_data = data.get('settings')
             if settings_data:
+                print("[Sync] 1/7: Settings & Logo...")
                 setting, created = SchoolSetting.objects.get_or_create(school_id=school_id)
                 setting.school_name = settings_data.get('school_name', setting.school_name)
                 setting.reg_no = settings_data.get('registration_number', setting.reg_no)
@@ -358,200 +358,191 @@ class SyncDataView(APIView):
                         ext = format.split('/')[-1] if format else 'png'
                         setting.logo.save(f"logo_{school_id}.{ext}", ContentFile(base64.b64decode(imgstr)), save=False)
                     except Exception as e:
-                        print(f"[Sync] Logo decoding error: {e}")
-                
+                        print(f"[Sync] Logo decoding warning: {e}")
                 setting.save()
 
-            # 2. Sync Users
+            # 2. Sync Users (High-level data, keep as loop)
             users_list = data.get('users', [])
+            print(f"[Sync] 2/7: Users ({len(users_list)})...")
             from django.contrib.auth.models import User
-            synced_users = 0
             for u in users_list:
                 if not u or not isinstance(u, dict): continue
                 identifier = str(u.get('phone', u.get('username', ''))).strip()
                 password = u.get('password')
-                role = u.get('role', 'teacher')
-                is_manager = u.get('manager_access', 0) == 1
-                
                 if not identifier or not password: continue
-                
                 user, _ = User.objects.get_or_create(username=identifier)
                 user.set_password(password)
-                user.is_staff = (role == 'admin')
-                user.is_superuser = (role == 'admin' or is_manager)
                 user.first_name = (u.get('full_name') or '')[:150]
                 user.save()
-                synced_users += 1
 
-            # 3. Sync Students
+            # 3. FAST SYNC: 🚀 Students (Bulk)
             students_list = data.get('students', [])
-            synced_students = 0
+            print(f"[Sync] 3/7: Students ({len(students_list)})...")
+            student_objs = []
             for s in students_list:
-                if not s or not isinstance(s, dict): continue
-                sid = s.get('sync_id')
-                if not sid: continue
-                
-                Student.objects.update_or_create(
-                    sync_id=sid,
-                    defaults={
-                        'school_id': school_id,
-                        'name': (s.get('name') or '')[:200],
-                        'father_name': (s.get('father_name') or '')[:200],
-                        'class_name': (s.get('class_name') or '')[:100],
-                        'section_name': (s.get('section_name') or '')[:100],
-                        'phone': (s.get('phone') or '')[:50],
-                        'admission_no': (s.get('admission_no') or '')[:100],
-                        'roll_no': (s.get('roll_no') or '')[:50],
-                        'status': (s.get('status') or 'Active')[:50],
-                        'gender': (s.get('gender') or '')[:20],
-                        'religion': (s.get('religion') or '')[:100],
-                    }
+                if not s or not isinstance(s, dict) or not s.get('sync_id'): continue
+                student_objs.append(Student(
+                    sync_id=s['sync_id'],
+                    school_id=school_id,
+                    name=(s.get('name') or '')[:200],
+                    father_name=(s.get('father_name') or '')[:200],
+                    class_name=(s.get('class_name') or '')[:100],
+                    section_name=(s.get('section_name') or '')[:100],
+                    phone=(s.get('phone') or '')[:50],
+                    admission_no=(s.get('admission_no') or '')[:100],
+                    roll_no=(s.get('roll_no') or '')[:50],
+                    status=(s.get('status') or 'Active')[:50],
+                    gender=(s.get('gender') or '')[:20],
+                    religion=(s.get('religion') or '')[:100],
+                    student_id=s.get('student_id') or s['sync_id'][:50],
+                ))
+            
+            if student_objs:
+                Student.objects.bulk_create(
+                    student_objs, 
+                    update_conflicts=True, 
+                    unique_fields=['sync_id'], 
+                    update_fields=['school_id', 'name', 'father_name', 'class_name', 'section_name', 'phone', 'admission_no', 'roll_no', 'status', 'gender', 'religion', 'student_id']
                 )
-                synced_students += 1
 
-            # 4. Sync Exams
+            # Map sync_id -> local database primary key (re-fetch after bulk)
+            student_map = {s.sync_id: s.id for s in Student.objects.filter(school_id=school_id)}
+
+            # 4. FAST SYNC: 🚀 Exams (Bulk)
             exams_list = data.get('exams', [])
-            synced_exams = 0
-            exam_map = {}
+            print(f"[Sync] 4/7: Exams ({len(exams_list)})...")
+            exam_objs = []
             for e in exams_list:
                 if not e or not isinstance(e, dict): continue
                 esid = e.get('sync_id') or f"exam_{school_id}_{e.get('exam_name')}_{e.get('year')}"
-                obj, _ = Exam.objects.update_or_create(
+                exam_objs.append(Exam(
                     sync_id=esid,
-                    defaults={
-                        'school_id': school_id,
-                        'exam_name': e.get('exam_name'),
-                        'year': e.get('year', 2026),
-                    }
-                )
-                exam_map[e.get('id')] = obj
-                synced_exams += 1
+                    school_id=school_id,
+                    exam_name=e.get('exam_name'),
+                    year=e.get('year', 2026),
+                ))
+            if exam_objs:
+                Exam.objects.bulk_create(exam_objs, update_conflicts=True, unique_fields=['sync_id'], update_fields=['exam_name', 'year'])
+            
+            exam_map = {e.sync_id: e.id for e in Exam.objects.filter(school_id=school_id)}
 
-            # 5. Sync Marks
+            # 5. FAST SYNC: 🚀 Marks (Bulk)
             marks_list = data.get('marks', [])
-            synced_marks = 0
+            print(f"[Sync] 5/7: Marks ({len(marks_list)})...")
+            mark_objs = []
+            seen_marks = set()
             for m in marks_list:
-                if not m or not isinstance(m, dict): continue
-                msid = m.get('sync_id')
-                if not msid: continue
+                sid = m.get('sync_id')
+                stid = student_map.get(m.get('student_sync_id'))
+                esid = f"exam_{school_id}_{m.get('exam_name')}_{m.get('year')}"
+                exid = exam_map.get(esid)
+                subj = m.get('subject')
+                term = m.get('term', '1st Term')
+                if not sid or not stid or not exid or not subj: continue
                 
-                try:
-                    student_obj = Student.objects.get(sync_id=m.get('student_sync_id'))
-                    exam_obj = exam_map.get(m.get('exam_id')) or Exam.objects.filter(exam_name=m.get('exam_name'), year=m.get('year'), school_id=school_id).first()
-                    if not exam_obj: continue
+                # DE-DUPLICATE: One mark per student/exam/subject/term
+                mark_key = (stid, exid, subj, term)
+                if mark_key in seen_marks: continue
+                seen_marks.add(mark_key)
 
-                    Mark.objects.update_or_create(
-                        sync_id=msid,
-                        defaults={
-                            'school_id': school_id,
-                            'student': student_obj,
-                            'exam': exam_obj,
-                            'subject': m.get('subject'),
-                            'marks': m.get('marks', 0),
-                            'term': m.get('term', '1st Term'),
-                        }
-                    )
-                    synced_marks += 1
-                except Student.DoesNotExist:
-                    continue
+                mark_objs.append(Mark(
+                    sync_id=sid,
+                    school_id=school_id,
+                    student_id=stid,
+                    exam_id=exid,
+                    subject=subj,
+                    marks=m.get('marks', 0),
+                    term=term,
+                ))
+            if mark_objs:
+                Mark.objects.bulk_create(mark_objs, update_conflicts=True, unique_fields=['sync_id'], update_fields=['marks', 'subject', 'term'])
 
-            # 6. Sync Teacher Assignments
-            assignments_list = data.get('assignments', [])
-            synced_assignments = 0
-            for a in assignments_list:
-                if not a or not isinstance(a, dict): continue
-                asid = a.get('sync_id')
-                if not asid: continue
-                TeacherClassAssignment.objects.update_or_create(
-                    sync_id=asid,
-                    defaults={
-                        'school_id': school_id,
-                        'teacher_id': a.get('teacher_id'),
-                        'class_name': a.get('class_name'),
-                        'section_name': a.get('section_name', 'Default'),
-                        'is_primary': True
-                    }
-                )
-                synced_assignments += 1
-
-            # 7. Sync Attendance
+            # 6. FAST SYNC: 🚀 Attendance (Bulk)
             attendance_list = data.get('attendance', [])
-            synced_attendance = 0
+            print(f"[Sync] 6/7: Attendance ({len(attendance_list)})...")
+            att_objs = []
+            seen_attendance = set()
             for att in attendance_list:
-                if not att or not isinstance(att, dict): continue
-                asid = att.get('sync_id') or f"{att.get('student_sync_id')}_{att.get('date')}_{att.get('class_name')}"
+                sid = att.get('sync_id') or f"{att.get('student_sync_id')}_{att.get('date')}_{att.get('class_name')}"
+                stid = student_map.get(att.get('student_sync_id'))
+                date = att.get('date')
+                if not stid or not date: continue
                 
-                try:
-                    student_obj = Student.objects.get(sync_id=att.get('student_sync_id'))
-                    Attendance.objects.update_or_create(
-                        sync_id=asid,
-                        defaults={
-                            'school_id': school_id,
-                            'student': student_obj,
-                            'date': att.get('date'),
-                            'status': att.get('status'),
-                            'class_name': att.get('class_name'),
-                            'section_name': att.get('section_name'),
-                        }
-                    )
-                    synced_attendance += 1
-                except Student.DoesNotExist:
-                    continue
+                # DE-DUPLICATE: One attendance record per student/date
+                att_key = (stid, date)
+                if att_key in seen_attendance: continue
+                seen_attendance.add(att_key)
 
-            # 8. Sync Timetable
+                att_objs.append(Attendance(
+                    sync_id=sid,
+                    school_id=school_id,
+                    student_id=stid,
+                    date=date,
+                    status=att.get('status', 'Present'),
+                    class_name=att.get('class_name', ''),
+                    section_name=att.get('section_name', 'Default'),
+                ))
+            if att_objs:
+                Attendance.objects.bulk_create(att_objs, update_conflicts=True, unique_fields=['sync_id'], update_fields=['status', 'date', 'class_name', 'section_name'])
+
+            # 7. FAST SYNC: 🚀 Timetable & Announcements (Bulk Overwrite)
+            print("[Sync] 7/7: Timetable, Announcements & Assignments...")
             timetable_list = data.get('timetable', [])
-            synced_timetable = 0
-            for t in timetable_list:
-                if not t or not isinstance(t, dict): continue
-                tsid = t.get('sync_id')
-                if not tsid: continue
-                Timetable.objects.update_or_create(
-                    sync_id=tsid,
-                    defaults={
-                        'school_id': school_id,
-                        'class_name': t.get('class_name'),
-                        'section_name': t.get('section_name'),
-                        'day': t.get('day'),
-                        'subject': t.get('subject'),
-                        'teacher_id': t.get('teacher_id'),
-                        'teacher_name': t.get('teacher_name'),
-                        'start_time': t.get('start_time'),
-                        'end_time': t.get('end_time'),
-                    }
-                )
-                synced_timetable += 1
+            Timetable.objects.filter(school_id=school_id).delete()
+            time_objs = [Timetable(
+                school_id=school_id,
+                class_name=t.get('class_name'),
+                section_name=t.get('section_name', 'Default'),
+                day=t.get('day'),
+                subject=t.get('subject'),
+                teacher_id=t.get('teacher_id', 0),
+                teacher_name=t.get('teacher_name', ''),
+                start_time=t.get('start_time', ''),
+                end_time=t.get('end_time', ''),
+                sync_id=t.get('sync_id')
+            ) for t in timetable_list]
+            Timetable.objects.bulk_create(time_objs)
 
-            # 9. Sync Announcements
-            announcements_list = data.get('announcements', [])
-            synced_announcements = 0
-            for ann in announcements_list:
-                if not ann or not isinstance(ann, dict): continue
-                asid = ann.get('sync_id')
-                if not asid: continue
-                Announcement.objects.update_or_create(
-                    sync_id=asid,
-                    defaults={
-                        'school_id': school_id,
-                        'title': ann.get('title'),
-                        'content': ann.get('content'),
-                        'class_name': ann.get('class_name'),
-                        'section_name': ann.get('section_name'),
-                        'created_at': ann.get('created_at'),
-                    }
-                )
-                synced_announcements += 1
+            ann_list = data.get('announcements', [])
+            Announcement.objects.filter(school_id=school_id).delete()
+            ann_objs = [Announcement(
+                school_id=school_id,
+                title=a.get('title'),
+                content=a.get('content'),
+                class_name=a.get('class_name'),
+                section_name=a.get('section_name'),
+                created_at=a.get('created_at'),
+                sync_id=a.get('sync_id')
+            ) for a in ann_list]
+            Announcement.objects.bulk_create(ann_objs)
 
+            # Sync Teacher Assignments
+            assignments_list = data.get('assignments', [])
+            TeacherClassAssignment.objects.filter(school_id=school_id).delete()
+            asgn_objs = [TeacherClassAssignment(
+                school_id=school_id,
+                teacher_id=a.get('teacher_id'),
+                class_name=a.get('class_name'),
+                section_name=a.get('section_name', 'Default'),
+                is_primary=True,
+                sync_id=a.get('sync_id')
+            ) for a in assignments_list]
+            TeacherClassAssignment.objects.bulk_create(asgn_objs)
+
+            print(f"[Sync] <<< COMPLETED FULL SYNC for school_id: {school_id} >>>")
+
+            # Return success with counts
             return Response({
-                "status": "success",
-                "message": "Synchronization completed.",
+                "status": "success", 
+                "message": "Bulk Synchronizaton completed.",
                 "counts": {
-                    "users": synced_users,
-                    "students": synced_students,
-                    "exams": synced_exams,
-                    "marks": synced_marks,
-                    "attendance": synced_attendance,
-                    "timetable": synced_timetable,
-                    "announcements": synced_announcements,
+                    "students": len(student_objs),
+                    "marks": len(mark_objs),
+                    "attendance": len(att_objs),
+                    "timetable": len(time_objs),
+                    "announcements": len(ann_objs),
+                    "assignments": len(asgn_objs),
+                    "users": len(users_list),
                 }
             }, status=status.HTTP_200_OK)
 
