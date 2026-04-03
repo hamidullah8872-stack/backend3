@@ -251,24 +251,38 @@ class TeacherMonthlyAttendanceHistoryView(APIView):
                 'year': year,
                 'assigned_class': {
                     'class_name': assignment.class_name,
-                    'section_name': assignment.section_name or '',
-                    'assignment_source': assignment.assignment_source,
-                    'is_primary': assignment.is_primary,
+                    'section_name': assignment.section_name,
                 },
                 'dates': dates,
                 'students': [
-                    {
-                        'id': st.id,
-                        'roll_no': st.roll_no or '',
-                        'name': st.name or '',
-                        'father_name': st.father_name or '',
-                    }
-                    for st in students
+                    {'id': s.id, 'roll_no': s.roll_no, 'name': s.name, 'father_name': s.father_name}
+                    for s in students
                 ],
                 'matrix': matrix,
-            },
-            status=status.HTTP_200_OK,
+            }
         )
+
+class StudentAttendanceView(APIView):
+    """Returns attendance history for a specific student (Parent App)."""
+    def get(self, request, student_id):
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        queryset = Attendance.objects.filter(student_id=student_id).order_by('-date')
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+        
+        serializer = AttendanceSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+class StudentResultView(APIView):
+    """Returns exam results for a specific student (Parent App)."""
+    def get(self, request, student_id):
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        queryset = Mark.objects.filter(student_id=student_id).order_by('-exam__date')
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+        
+        serializer = MarkSerializer(queryset, many=True)
+        return Response(serializer.data)
 
     @staticmethod
     def _safe_int(raw, fallback):
@@ -369,18 +383,29 @@ class SyncDataView(APIView):
             users_list = data.get('users', [])
             print(f"[Sync] 2/7: Users ({len(users_list)})...")
             from django.contrib.auth.models import User
-            user_mapping = {} # Map PC App ID -> Django User ID
+            # Map PC App's integer ID -> Cloud's User ID (using username as the bridge)
+            pc_id_to_cloud_id = {}
             for u in users_list:
                 if not u or not isinstance(u, dict): continue
                 identifier = str(u.get('phone', u.get('username', ''))).strip()
                 password = u.get('password')
-                if not identifier or not password: continue
-                user, _ = User.objects.get_or_create(username=identifier)
-                user.set_password(password)
+                pc_id = u.get('id')
+                
+                if not identifier: continue
+                
+                # Update or Create User
+                user, created = User.objects.get_or_create(username=identifier)
+                if password:
+                    user.set_password(password)
                 user.first_name = (u.get('full_name') or '')[:150]
+                # If they were a manager in PC app, give them superuser status in Cloud for 'Pay Fees' access
+                if u.get('manager_access') == 1 or u.get('manager_access') is True:
+                    user.is_superuser = True
+                    user.is_staff = True
                 user.save()
-                if u.get('id'):
-                    user_mapping[int(u.get('id'))] = user.id
+                
+                if pc_id:
+                    pc_id_to_cloud_id[int(pc_id)] = user.id
 
             # 3. FAST SYNC: 🚀 Students (Bulk)
             students_list = data.get('students', [])
@@ -412,7 +437,7 @@ class SyncDataView(APIView):
                     update_fields=['school_id', 'name', 'father_name', 'class_name', 'section_name', 'phone', 'admission_no', 'roll_no', 'status', 'gender', 'religion', 'student_id']
                 )
 
-            # Map sync_id -> local database primary key (re-fetch after bulk)
+            # Map student sync_id -> local database primary key (re-fetch after bulk)
             student_map = {s.sync_id: s.id for s in Student.objects.filter(school_id=school_id)}
 
             # 4. FAST SYNC: 🚀 Exams (Bulk)
@@ -512,7 +537,7 @@ class SyncDataView(APIView):
                 section_name=t.get('section_name') or 'Default',
                 day=t.get('day') or 'Monday',
                 subject=t.get('subject') or '',
-                teacher_id=user_mapping.get(t.get('teacher_id'), 0),
+                teacher_id=pc_id_to_cloud_id.get(int(t.get('teacher_id')), 0) if t.get('teacher_id') else 0,
                 teacher_name=t.get('teacher_name') or '',
                 start_time=t.get('start_time') or '',
                 end_time=t.get('end_time') or '',
@@ -538,13 +563,14 @@ class SyncDataView(APIView):
             TeacherClassAssignment.objects.filter(school_id=school_id).delete()
             asgn_objs = [TeacherClassAssignment(
                 school_id=school_id,
-                teacher_id=user_mapping.get(a.get('teacher_id'), 0),
+                teacher_id=pc_id_to_cloud_id.get(int(a.get('teacher_id')), 0) if a.get('teacher_id') else 0,
                 class_name=a.get('class_name') or '',
                 section_name=a.get('section_name') or 'Default',
                 is_primary=True,
                 sync_id=a.get('sync_id') or ''
             ) for a in assignments_list]
             TeacherClassAssignment.objects.bulk_create(asgn_objs)
+            print(f"[Sync] Assignments saved: {len(asgn_objs)}")
 
             print(f"[Sync] <<< COMPLETED FULL SYNC for school_id: {school_id} >>>")
 

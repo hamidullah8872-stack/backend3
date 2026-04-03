@@ -27,9 +27,12 @@ class ExamSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class MarkSerializer(serializers.ModelSerializer):
+    term = serializers.CharField(source='exam.term', read_only=True)
+    exam_name = serializers.CharField(source='exam.name', read_only=True)
+    
     class Meta:
         model = Mark
-        fields = '__all__'
+        fields = ['id', 'student', 'exam', 'exam_name', 'term', 'subject', 'marks', 'marks_obtained', 'total_marks', 'sync_id']
 
 
 class TeacherClassAssignmentSerializer(serializers.ModelSerializer):

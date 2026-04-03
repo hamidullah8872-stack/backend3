@@ -44,10 +44,13 @@ class LoginView(APIView):
                 except User.DoesNotExist:
                     pass
 
-            if user:
                 # Prepare standard response matching mobile app expectations
+                # Convention: School ID is the first 6 digits of the phone/username or '123456'
+                school_id = identifier[:6] if identifier and identifier.isdigit() else "123456"
+                
                 return Response({
                     "status": "success",
+                    "school_id": school_id,
                     "user": {
                         "id": user.id,
                         "username": user.username,
