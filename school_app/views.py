@@ -400,16 +400,15 @@ class SyncDataView(APIView):
                         user.set_password(password)
                     else:
                         user.set_password("teacher123") # Fallback for new users
-                    user.is_active = True
                 else:
-                    # Optional: Only update password if syncing from PC app is the source of truth
-                    # and the password provided isn't empty. 
-                    # For now, we only set it on creation to avoid overwriting cloud-side changes.
-                    pass
-
+                    # If password matches the input, no need to hash again
+                    if password and not user.check_password(password):
+                        print(f"[Sync] Updating password for user: {identifier}")
+                        user.set_password(password)
+                
                 user.first_name = (u.get('full_name') or '')[:150]
                 user.is_active = True
-                # If they were a manager in PC app, give them superuser status in Cloud for 'Pay Fees' access
+                # If they were a manager in PC app, give them superuser status in Cloud
                 if u.get('manager_access') == 1 or u.get('manager_access') is True:
                     user.is_superuser = True
                     user.is_staff = True
