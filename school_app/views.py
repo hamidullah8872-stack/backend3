@@ -502,15 +502,15 @@ class SyncDataView(APIView):
             Timetable.objects.filter(school_id=school_id).delete()
             time_objs = [Timetable(
                 school_id=school_id,
-                class_name=t.get('class_name'),
-                section_name=t.get('section_name', 'Default'),
-                day=t.get('day'),
-                subject=t.get('subject'),
-                teacher_id=t.get('teacher_id', 0),
-                teacher_name=t.get('teacher_name', ''),
-                start_time=t.get('start_time', ''),
-                end_time=t.get('end_time', ''),
-                sync_id=t.get('sync_id')
+                class_name=t.get('class_name') or '',
+                section_name=t.get('section_name') or 'Default',
+                day=t.get('day') or 'Monday',
+                subject=t.get('subject') or '',
+                teacher_id=t.get('teacher_id') or 0,
+                teacher_name=t.get('teacher_name') or '',
+                start_time=t.get('start_time') or '',
+                end_time=t.get('end_time') or '',
+                sync_id=t.get('sync_id') or ''
             ) for t in timetable_list]
             Timetable.objects.bulk_create(time_objs)
 
@@ -518,12 +518,12 @@ class SyncDataView(APIView):
             Announcement.objects.filter(school_id=school_id).delete()
             ann_objs = [Announcement(
                 school_id=school_id,
-                title=a.get('title'),
-                content=a.get('content'),
-                class_name=a.get('class_name'),
-                section_name=a.get('section_name'),
-                created_at=a.get('created_at'),
-                sync_id=a.get('sync_id')
+                title=a.get('title') or '',
+                content=a.get('content') or '',
+                class_name=a.get('class_name') or '',
+                section_name=a.get('section_name') or '',
+                created_at=a.get('created_at') or '',
+                sync_id=a.get('sync_id') or ''
             ) for a in ann_list]
             Announcement.objects.bulk_create(ann_objs)
 
@@ -532,11 +532,11 @@ class SyncDataView(APIView):
             TeacherClassAssignment.objects.filter(school_id=school_id).delete()
             asgn_objs = [TeacherClassAssignment(
                 school_id=school_id,
-                teacher_id=a.get('teacher_id'),
-                class_name=a.get('class_name'),
-                section_name=a.get('section_name', 'Default'),
+                teacher_id=a.get('teacher_id') or 0,
+                class_name=a.get('class_name') or '',
+                section_name=a.get('section_name') or 'Default',
                 is_primary=True,
-                sync_id=a.get('sync_id')
+                sync_id=a.get('sync_id') or ''
             ) for a in assignments_list]
             TeacherClassAssignment.objects.bulk_create(asgn_objs)
 
