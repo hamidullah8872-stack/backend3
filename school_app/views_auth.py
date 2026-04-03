@@ -51,6 +51,7 @@ class LoginView(APIView):
                     "user": {
                         "id": user.id,
                         "username": user.username,
+                        "full_name": user.first_name,
                         "role": "admin" if user.is_staff else "teacher",
                         "phone": identifier if identifier.isdigit() else "",
                         "manager_access": user.is_superuser

@@ -15,6 +15,8 @@ from .views import (
     AnnouncementViewSet,
     AllSectionsView,
     TeacherAssignmentsView,
+    StudentFeeHistoryView,
+    PayFeeView,
 )
 from .views_auth import LoginView
 from .debug_views import DbDebugView
@@ -38,5 +40,7 @@ urlpatterns = [
     path('all-sections/', AllSectionsView.as_view(), name='all_sections'),
     path('teacher/<int:teacher_id>/assignments/', TeacherAssignmentsView.as_view(), name='teacher_assignments'),
     path('teachers/<int:teacher_id>/monthly-attendance-history/', TeacherMonthlyAttendanceHistoryView.as_view()),
+    path('student/<int:student_id>/fees/', StudentFeeHistoryView.as_view(), name='student_fees'),
+    path('fees/pay/', PayFeeView.as_view(), name='pay_fee'),
     path('', include(router.urls)),
 ]

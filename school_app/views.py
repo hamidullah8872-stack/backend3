@@ -308,7 +308,8 @@ class SchoolInfoView(APIView):
     """Returns general school information."""
 
     def get(self, request):
-        setting = SchoolSetting.get_active()
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        setting = SchoolSetting.get_active(school_id=school_id)
         return Response({
             'school_name': setting.school_name,
             'registration_number': setting.reg_no or '',
@@ -321,9 +322,11 @@ class SchoolLogoView(APIView):
     """Serves the school logo image."""
 
     def get(self, request):
-        setting = SchoolSetting.get_active()
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        setting = SchoolSetting.get_active(school_id=school_id)
         if setting.logo:
             return HttpResponse(setting.logo.read(), content_type="image/png")
+        return HttpResponse("", status=404)
 class SyncDataView(APIView):
     """
     Receives and synchronizes FULL bulk data from the PC application (SQLite) 
@@ -366,6 +369,7 @@ class SyncDataView(APIView):
             users_list = data.get('users', [])
             print(f"[Sync] 2/7: Users ({len(users_list)})...")
             from django.contrib.auth.models import User
+            user_mapping = {} # Map PC App ID -> Django User ID
             for u in users_list:
                 if not u or not isinstance(u, dict): continue
                 identifier = str(u.get('phone', u.get('username', ''))).strip()
@@ -375,6 +379,8 @@ class SyncDataView(APIView):
                 user.set_password(password)
                 user.first_name = (u.get('full_name') or '')[:150]
                 user.save()
+                if u.get('id'):
+                    user_mapping[int(u.get('id'))] = user.id
 
             # 3. FAST SYNC: 🚀 Students (Bulk)
             students_list = data.get('students', [])
@@ -506,7 +512,7 @@ class SyncDataView(APIView):
                 section_name=t.get('section_name') or 'Default',
                 day=t.get('day') or 'Monday',
                 subject=t.get('subject') or '',
-                teacher_id=t.get('teacher_id') or 0,
+                teacher_id=user_mapping.get(t.get('teacher_id'), 0),
                 teacher_name=t.get('teacher_name') or '',
                 start_time=t.get('start_time') or '',
                 end_time=t.get('end_time') or '',
@@ -532,7 +538,7 @@ class SyncDataView(APIView):
             TeacherClassAssignment.objects.filter(school_id=school_id).delete()
             asgn_objs = [TeacherClassAssignment(
                 school_id=school_id,
-                teacher_id=a.get('teacher_id') or 0,
+                teacher_id=user_mapping.get(a.get('teacher_id'), 0),
                 class_name=a.get('class_name') or '',
                 section_name=a.get('section_name') or 'Default',
                 is_primary=True,
@@ -562,3 +568,52 @@ class SyncDataView(APIView):
             error_details = traceback.format_exc()
             print(f"[Sync] CRITICAL ERROR: {error_details}")
             return Response({"status": "error", "message": f"Sync Error: {error_details}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class StudentFeeHistoryView(APIView):
+    """Returns fee history for a specific student."""
+    def get(self, request, student_id):
+        school_id = request.headers.get('x-school-id') or request.query_params.get('school_id')
+        queryset = FeeLedger.objects.filter(student_id=student_id)
+        if school_id:
+            queryset = queryset.filter(school_id=school_id)
+        
+        serializer = FeeLedgerSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+class PayFeeView(APIView):
+    """Processes a fee payment via the mobile app."""
+    def post(self, request):
+        data = request.data
+        student_id = data.get('student_id')
+        month = data.get('month')
+        year = data.get('year')
+        amount = data.get('amount_paid')
+        
+        if not student_id or not month or not year or amount is None:
+            return Response({"status": "error", "message": "Missing payment details"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            student = Student.objects.get(id=student_id)
+            ledger, created = FeeLedger.objects.get_or_create(
+                student=student, 
+                month=month, 
+                year=year,
+                defaults={
+                    'base_fee': 0,
+                    'monthly_fee': 0,
+                    'total_payable': 0,
+                    'status': 'Partially Paid'
+                }
+            )
+            ledger.paid_amount += float(amount)
+            if ledger.paid_amount >= ledger.total_payable and ledger.total_payable > 0:
+                ledger.status = 'Paid'
+            else:
+                ledger.status = 'Partially Paid'
+            ledger.save()
+            
+            return Response({"status": "success", "message": "Payment processed successfully"})
+        except Student.DoesNotExist:
+            return Response({"status": "error", "message": "Student not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"status": "error", "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

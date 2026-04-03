@@ -147,7 +147,9 @@ class SchoolSetting(models.Model):
         return self.school_name
 
     @classmethod
-    def get_active(cls):
+    def get_active(cls, school_id=None):
+        if school_id:
+            return cls.objects.filter(school_id=school_id).first() or cls(school_id=school_id, school_name="Skyronix Model School")
         return cls.objects.first() or cls(school_name="Skyronix Model School")
 
 class Announcement(models.Model):
