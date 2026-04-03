@@ -456,7 +456,12 @@ class SyncDataView(APIView):
                     term=term,
                 ))
             if mark_objs:
-                Mark.objects.bulk_create(mark_objs, update_conflicts=True, unique_fields=['sync_id'], update_fields=['marks', 'subject', 'term'])
+                Mark.objects.bulk_create(
+                    mark_objs, 
+                    update_conflicts=True, 
+                    unique_fields=['student', 'exam', 'subject', 'term'], 
+                    update_fields=['marks', 'sync_id']
+                )
 
             # 6. FAST SYNC: 🚀 Attendance (Bulk)
             attendance_list = data.get('attendance', [])
@@ -484,7 +489,12 @@ class SyncDataView(APIView):
                     section_name=att.get('section_name', 'Default'),
                 ))
             if att_objs:
-                Attendance.objects.bulk_create(att_objs, update_conflicts=True, unique_fields=['sync_id'], update_fields=['status', 'date', 'class_name', 'section_name'])
+                Attendance.objects.bulk_create(
+                    att_objs, 
+                    update_conflicts=True, 
+                    unique_fields=['student', 'date'], 
+                    update_fields=['status', 'class_name', 'section_name', 'sync_id']
+                )
 
             # 7. FAST SYNC: 🚀 Timetable & Announcements (Bulk Overwrite)
             print("[Sync] 7/7: Timetable, Announcements & Assignments...")
