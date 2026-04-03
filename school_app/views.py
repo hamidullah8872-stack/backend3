@@ -395,9 +395,20 @@ class SyncDataView(APIView):
                 
                 # Update or Create User
                 user, created = User.objects.get_or_create(username=identifier)
-                if password:
-                    user.set_password(password)
+                if created:
+                    if password:
+                        user.set_password(password)
+                    else:
+                        user.set_password("teacher123") # Fallback for new users
+                    user.is_active = True
+                else:
+                    # Optional: Only update password if syncing from PC app is the source of truth
+                    # and the password provided isn't empty. 
+                    # For now, we only set it on creation to avoid overwriting cloud-side changes.
+                    pass
+
                 user.first_name = (u.get('full_name') or '')[:150]
+                user.is_active = True
                 # If they were a manager in PC app, give them superuser status in Cloud for 'Pay Fees' access
                 if u.get('manager_access') == 1 or u.get('manager_access') is True:
                     user.is_superuser = True
